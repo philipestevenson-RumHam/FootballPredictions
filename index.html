@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<title>Football Predictions</title>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+// CONFIG — No import needed (React is global)
+const SUPABASE_URL = 'https://oggoghhbjskbwcrsxigl.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nZ29naGhianNrYndjcnN4aWdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNzkyNjIsImV4cCI6MjA4Mjk1NTI2Mn0.kaJLNonTZ7diSieUBjct9TeA6mMT9qSjH1Nyl1_Svb0';
+
+// ✅ FIXED: Chainable .eq() with proper encoding
+const supabase = {
+from: (table) => ({
+select: (columns = '*') => {
+let filters = [];
+const addFilter = (column, value) => {
+filters.push({ column, value });
+return chainableSelect;
+};
+const buildQueryString = () => {
+let query = `select=${encodeURIComponent(columns)}`;
+filters.forEach(f => {
+query += `&${encodeURIComponent(f.column)}=eq.${encodeURIComponent(f.value)}`;
+});
+return query;
+};
+const chainableSelect = {
+eq: addFilter,
+single: async () => {
+const url = `${SUPABASE_URL}/rest/v1/${table}?${buildQueryString()}`;
+const response = await fetch(url, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const data = await response.json();
+return { data: data[0] || null, error: data.length === 0 ? 'Not found' : null };
+},
+then: async (resolve) => {
+const url = `${SUPABASE_URL}/rest/v1/${table}?${buildQueryString()}`;
+const response = await fetch(url, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const data = await response.json();
+resolve({ data, error: null });
+},
+order: (column, options = {}) => ({
+then: async (resolve) => {
+const direction = options.ascending ? 'asc' : 'desc';
+const url = `${SUPABASE_URL}/rest/v1/${table}?${buildQueryString()}&order=${encodeURIComponent(column)}.${direction}`;
+const response = await fetch(url, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const data = await response.json();
+resolve({ data, error: null });
+}
+})
+};
+return chainableSelect;
+},
+insert: (records) => ({
+select: () => ({
+single: async () => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+method: 'POST',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+'Content-Type': 'application/json',
+'Prefer': 'return=representation'
+},
+body: JSON.stringify(records[0])
+});
+const data = await response.json();
+return { data: data[0], error: null };
+}
+}),
+then: async (resolve) => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+method: 'POST',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify(records)
+});
+const data = await response.json();
+resolve({ data, error: null });
+}
+}),
+update: (updates) => ({
+eq: (column, value) => ({
+then: async (resolve) => {
+const url = `${SUPABASE_URL}/rest/v1/${table}?${column}=eq.${encodeURIComponent(value)}`;
+const response = await fetch(url, {
+method: 'PATCH',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify(updates)
+});
+resolve({ error: null });
+}
+})
+}),
+upsert: (records) => ({
+then: async (resolve) => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+method: 'POST',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+'Content-Type': 'application/json',
+'Prefer': 'resolution=merge-duplicates'
+},
+body: JSON.stringify(records)
+});
+resolve({ error: null });
+}
+})
+})
+};
+
+// ✅ NEW: Enhanced point calculation with joker reassignment
+const calculateUserPoints = (predictions, matches) => {
+  // Find original joker
+  const originalJoker = predictions.find(p => p.is_joker);
+  let effectiveJokerMatchId = null;
+
+  if (originalJoker) {
+    const jokerMatch = matches.find(m => m.id === originalJoker.match_id);
+    if (jokerMatch && jokerMatch.home_score === 'C' && jokerMatch.away_score === 'C') {
+      // Joker is on cancelled match — find first non-cancelled
+      const firstValid = matches.find(m => !(m.home_score === 'C' && m.away_score === 'C'));
+      effectiveJokerMatchId = firstValid ? firstValid.id : null;
+    } else {
+      effectiveJokerMatchId = originalJoker.match_id;
+    }
+  }
+
+  let total = 0;
+  const detailed = predictions.map(pred => {
+    const match = matches.find(m => m.id === pred.match_id);
+    if (!match) return { points: 0 };
+
+    // Skip cancelled matches
+    if (match.home_score === 'C' && match.away_score === 'C') {
+      return { points: 0 };
+    }
+
+    let points = 0;
+    const predHome = pred.home_score;
+    const predAway = pred.away_score;
+    const actualHome = match.home_score;
+    const actualAway = match.away_score;
+
+    // Skip if actual scores aren't numeric (shouldn't happen post-save)
+    if (typeof actualHome !== 'number' || typeof actualAway !== 'number') {
+      return { points: 0 };
+    }
+
+    if (predHome === actualHome) points += 1;
+    if (predAway === actualAway) points += 1;
+    const predResult = predHome > predAway ? 'H' : predHome < predAway ? 'A' : 'D';
+    const actualResult = actualHome > actualAway ? 'H' : actualHome < actualAway ? 'A' : 'D';
+    if (predResult === actualResult) points += 1;
+    if (predHome === actualHome && predAway === actualAway) points += 1;
+
+    // Apply joker bonus to effective match
+    if (match.id === effectiveJokerMatchId) {
+      points *= 2;
+    }
+
+    return { points };
+  });
+
+  return {
+    total: detailed.reduce((sum, d) => sum + d.points, 0),
+    detailed
+  };
+};
+
+const App = () => {
+const [user, setUser] = React.useState(null);
+const [view, setView] = React.useState('login');
+const [username, setUsername] = React.useState('');
+const [password, setPassword] = React.useState('');
+const [error, setError] = React.useState('');
+const handleLogin = async (e) => {
+e.preventDefault();
+setError('');
+const { data, error: err } = await supabase
+.from('users')
+.select('*')
+.eq('username', username)
+.eq('password', password)
+.single();
+if (err || !data) {
+setError('Invalid username or password');
+return;
+}
+if (data.initial_password) {
+setUser(data);
+setView('change-password');
+} else {
+setUser(data);
+setView(data.is_admin ? 'admin' : 'user');
+}
+};
+const handleLogout = () => {
+setUser(null);
+setView('login');
+setUsername('');
+setPassword('');
+};
+if (view === 'login') {
+return <LoginView
+username={username}
+setUsername={setUsername}
+password={password}
+setPassword={setPassword}
+handleLogin={handleLogin}
+error={error}
+/>;
+}
+if (view === 'change-password') {
+return <ChangePasswordView user={user} setView={setView} />;
+}
+if (view === 'admin') {
+return <AdminView user={user} handleLogout={handleLogout} />;
+}
+return <UserView user={user} handleLogout={handleLogout} />;
+};
+const LoginView = ({ username, setUsername, password, setPassword, handleLogin, error }) => (
+<div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-700 flex items-center justify-center p-4">
+<div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md">
+<div className="text-center mb-8">
+<div className="text-6xl mb-4">⚽</div>
+<h1 className="text-3xl font-bold text-green-800">Football Predictions</h1>
+<p className="text-gray-600 mt-2">Login to make your predictions</p>
+</div>
+<form onSubmit={handleLogin}>
+<div className="mb-4">
+<label className="block text-gray-700 font-semibold mb-2">Username</label>
+<input
+type="text"
+value={username}
+onChange={(e) => setUsername(e.target.value)}
+className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+required
+/>
+</div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Password</label>
+<input
+type="password"
+value={password}
+onChange={(e) => setPassword(e.target.value)}
+className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+required
+/>
+</div>
+{error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg">{error}</div>}
+<button
+type="submit"
+className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition"
+>
+Login
+</button>
+</form>
+</div>
+</div>
+);
+const ChangePasswordView = ({ user, setView }) => {
+const [newPassword, setNewPassword] = React.useState('');
+const [confirmPassword, setConfirmPassword] = React.useState('');
+const [error, setError] = React.useState('');
+const handleChangePassword = async (e) => {
+e.preventDefault();
+setError('');
+if (newPassword !== confirmPassword) {
+setError('Passwords do not match');
+return;
+}
+if (newPassword.length < 6) {
+setError('Password must be at least 6 characters');
+return;
+}
+await supabase
+.from('users')
+.update({ password: newPassword, initial_password: null })
+.eq('id', user.id);
+setView(user.is_admin ? 'admin' : 'user');
+};
+return (
+<div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-700 flex items-center justify-center p-4">
+<div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md">
+<h2 className="text-2xl font-bold text-green-800 mb-6">Change Password</h2>
+<p className="text-gray-600 mb-6">You must change your initial password before continuing.</p>
+<form onSubmit={handleChangePassword}>
+<div className="mb-4">
+<label className="block text-gray-700 font-semibold mb-2">New Password</label>
+<input
+type="password"
+value={newPassword}
+onChange={(e) => setNewPassword(e.target.value)}
+className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+required
+/>
+</div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Confirm Password</label>
+<input
+type="password"
+value={confirmPassword}
+onChange={(e) => setConfirmPassword(e.target.value)}
+className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+required
+/>
+</div>
+{error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg">{error}</div>}
+<button
+type="submit"
+className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg"
+>
+Update Password
+</button>
+</form>
+</div>
+</div>
+);
+};
+const AdminView = ({ user, handleLogout }) => {
+const [activeTab, setActiveTab] = React.useState('games');
+const [gamesLists, setGamesLists] = React.useState([]);
+const [users, setUsers] = React.useState([]);
+const [loading, setLoading] = React.useState(true);
+React.useEffect(() => {
+loadData();
+}, []);
+const loadData = async () => {
+const { data: games } = await supabase.from('games_lists').select('*').order('deadline', { ascending: false });
+const { data: usersData } = await supabase.from('users').select('*');
+setGamesLists(games || []);
+setUsers(usersData || []);
+setLoading(false);
+};
+return (
+<div className="min-h-screen bg-gray-100">
+<nav className="bg-green-800 text-white p-4 shadow-lg">
+<div className="container mx-auto flex justify-between items-center">
+<div className="flex items-center gap-3">
+<span className="text-3xl">⚽</span>
+<h1 className="text-2xl font-bold">Admin Panel</h1>
+</div>
+<div className="flex items-center gap-4">
+<span>Welcome, {user.username}</span>
+<button onClick={handleLogout} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+Logout
+</button>
+</div>
+</div>
+</nav>
+<div className="container mx-auto p-6">
+<div className="bg-white rounded-lg shadow-lg mb-6">
+<div className="flex border-b">
+<button
+onClick={() => setActiveTab('games')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'games' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+Manage Games
+</button>
+<button
+onClick={() => setActiveTab('submissions')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'submissions' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+View Submissions
+</button>
+<button
+onClick={() => setActiveTab('users')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'users' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+Manage Users
+</button>
+<button
+onClick={() => setActiveTab('leaderboard')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'leaderboard' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+Leaderboard
+</button>
+</div>
+<div className="p-6">
+{loading ? (
+<div className="text-center py-12">Loading...</div>
+) : (
+<>
+{activeTab === 'games' && <ManageGames gamesLists={gamesLists} loadData={loadData} />}
+{activeTab === 'submissions' && <ViewSubmissions gamesLists={gamesLists} users={users} />}
+{activeTab === 'users' && <ManageUsers users={users} loadData={loadData} />}
+{activeTab === 'leaderboard' && <Leaderboard gamesLists={gamesLists} users={users} />}
+</>
+)}
+</div>
+</div>
+</div>
+</div>
+);
+};
+const ManageGames = ({ gamesLists, loadData }) => {
+const [showForm, setShowForm] = React.useState(false);
+const [editingGame, setEditingGame] = React.useState(null);
+const [originalMatches, setOriginalMatches] = React.useState([]);
+const [formData, setFormData] = React.useState({
+week_number: '',
+deadline: '',
+matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
+});
+
+const parseCSV = (text) => {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim());
+  const matches = [];
+  for (let i = 1; i < lines.length && i <= 10; i++) {
+    const values = lines[i].split(',').map(v => v.trim());
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = values[idx] || '';
+    });
+    matches.push({
+      home_team: obj['Home Team'] || obj['home_team'] || '',
+      away_team: obj['Away Team'] || obj['away_team'] || '',
+      home_score: obj['Home Score'] ? (obj['Home Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Home Score'])) : null,
+      away_score: obj['Away Score'] ? (obj['Away Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Away Score'])) : null
+    });
+  }
+  // Pad to 10
+  while (matches.length < 10) {
+    matches.push({ home_team: '', away_team: '', home_score: null, away_score: null });
+  }
+  return matches;
+};
+
+const handleFileUpload = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const csv = event.target.result;
+    const matches = parseCSV(csv);
+    setFormData(prev => ({ ...prev, matches }));
+  };
+  reader.readAsText(file);
+};
+
+const handleSubmit = async (e) => {
+e.preventDefault();
+// Update games_lists (metadata)
+await supabase
+.from('games_lists')
+.update({
+week_number: formData.week_number,
+deadline: formData.deadline
+})
+.eq('id', editingGame.id);
+// ✅ Update each match's data in the `matches` table
+for (let i = 0; i < formData.matches.length; i++) {
+const matchData = formData.matches[i];
+const orig = originalMatches.find(m => m.match_number === i + 1);
+if (orig) {
+await supabase
+.from('matches')
+.update({
+home_team: matchData.home_team,
+away_team: matchData.away_team,
+home_score: matchData.home_score === '' ? null : matchData.home_score,
+away_score: matchData.away_score === '' ? null : matchData.away_score
+})
+.eq('id', orig.id);
+}
+}
+setShowForm(false);
+setEditingGame(null);
+setOriginalMatches([]);
+setFormData({
+week_number: '',
+deadline: '',
+matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
+});
+loadData(); // Refresh
+};
+const handleEdit = async (game) => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matches = await response.json();
+setEditingGame(game);
+setOriginalMatches(matches);
+setFormData({
+week_number: game.week_number,
+deadline: game.deadline,
+matches: matches || Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
+});
+setShowForm(true);
+};
+const handleExportCSV = async (gameId) => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${gameId}&select=*&order=match_number.asc`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matches = await response.json();
+const csv = 'Home Team,Away Team,Home Score,Away Score\n' +
+matches.map(m => `${m.home_team},${m.away_team},${m.home_score || ''},${m.away_score || ''}`).join('\n');
+const blob = new Blob([csv], { type: 'text/csv' });
+const url = window.URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `week_${formData.week_number}_matches.csv`;
+a.click();
+};
+return (
+<div>
+{!showForm ? (
+<>
+<button
+onClick={() => setShowForm(true)}
+className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg mb-6"
+>
++ Create New Games List
+</button>
+<div className="space-y-4">
+{gamesLists.map(game => (
+<div key={game.id} className="border rounded-lg p-4 hover:shadow-md transition">
+<div className="flex justify-between items-center">
+<div>
+<h3 className="text-xl font-bold text-green-800">Week {game.week_number}</h3>
+<p className="text-gray-600">Deadline: {new Date(game.deadline).toLocaleString()}</p>
+</div>
+<div className="flex gap-2">
+<button
+onClick={() => handleEdit(game)}
+className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+>
+Edit
+</button>
+<button
+onClick={() => handleExportCSV(game.id)}
+className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
+>
+Export CSV
+</button>
+</div>
+</div>
+</div>
+))}
+</div>
+</>
+) : (
+<form onSubmit={handleSubmit} className="space-y-6">
+<div className="grid grid-cols-2 gap-4">
+<div>
+<label className="block text-gray-700 font-semibold mb-2">Week Number</label>
+<input
+type="number"
+value={formData.week_number}
+onChange={(e) => setFormData({ ...formData, week_number: e.target.value })}
+className="w-full px-4 py-2 border rounded-lg"
+required
+/>
+</div>
+<div>
+<label className="block text-gray-700 font-semibold mb-2">Deadline</label>
+<input
+type="datetime-local"
+value={formData.deadline}
+onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+className="w-full px-4 py-2 border rounded-lg"
+required
+/>
+</div>
+</div>
+<div className="flex gap-4 mb-4">
+<button
+type="button"
+onClick={() => document.getElementById('csv-input').click()}
+className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg"
+>
+📁 Import from CSV
+</button>
+<input
+id="csv-input"
+type="file"
+accept=".csv"
+onChange={handleFileUpload}
+className="hidden"
+/>
+</div>
+<div className="space-y-4">
+<h3 className="text-lg font-bold">Matches</h3>
+{formData.matches.map((match, idx) => (
+<div key={idx} className="grid grid-cols-6 gap-2 items-center border p-3 rounded-lg">
+<div className="font-semibold">#{idx + 1}</div>
+<input
+type="text"
+placeholder="Home Team"
+value={match.home_team}
+onChange={(e) => {
+const newMatches = [...formData.matches];
+newMatches[idx].home_team = e.target.value;
+setFormData({ ...formData, matches: newMatches });
+}}
+className="px-3 py-2 border rounded"
+required
+/>
+<input
+type="text"
+placeholder="Away Team"
+value={match.away_team}
+onChange={(e) => {
+const newMatches = [...formData.matches];
+newMatches[idx].away_team = e.target.value;
+setFormData({ ...formData, matches: newMatches });
+}}
+className="px-3 py-2 border rounded"
+required
+/>
+<input
+type="text"
+placeholder="Home"
+value={match.home_score || ''}
+onChange={(e) => {
+const newMatches = [...formData.matches];
+const val = e.target.value.toUpperCase();
+newMatches[idx].home_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
+setFormData({ ...formData, matches: newMatches });
+}}
+className="px-3 py-2 border rounded"
+/>
+<input
+type="text"
+placeholder="Away"
+value={match.away_score || ''}
+onChange={(e) => {
+const newMatches = [...formData.matches];
+const val = e.target.value.toUpperCase();
+newMatches[idx].away_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
+setFormData({ ...formData, matches: newMatches });
+}}
+className="px-3 py-2 border rounded"
+/>
+</div>
+))}
+</div>
+<div className="flex gap-4">
+<button
+type="submit"
+className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg"
+>
+{editingGame ? 'Update' : 'Create'} Games List
+</button>
+<button
+type="button"
+onClick={() => {
+setShowForm(false);
+setEditingGame(null);
+setOriginalMatches([]);
+}}
+className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg"
+>
+Cancel
+</button>
+</div>
+</form>
+)}
+</div>
+);
+};
+const ViewSubmissions = ({ gamesLists, users }) => {
+const [selectedGame, setSelectedGame] = React.useState(null);
+const [submissions, setSubmissions] = React.useState([]);
+const [matches, setMatches] = React.useState([]);
+React.useEffect(() => {
+if (selectedGame) {
+loadSubmissions();
+}
+}, [selectedGame]);
+const loadSubmissions = async () => {
+const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const subs = await response1.json();
+const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matchData = await response2.json();
+setSubmissions(subs || []);
+setMatches(matchData || []);
+};
+const usersWhoSubmitted = submissions.map(s => s.user_id);
+const usersWhoDidntSubmit = users.filter(u => !u.is_admin && !usersWhoSubmitted.includes(u.id));
+return (
+<div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Select Games List</label>
+<select
+onChange={(e) => setSelectedGame(gamesLists.find(g => g.id === parseInt(e.target.value)))}
+className="w-full px-4 py-2 border rounded-lg"
+>
+<option value="">-- Select Week --</option>
+{gamesLists.map(game => (
+<option key={game.id} value={game.id}>Week {game.week_number}</option>
+))}
+</select>
+</div>
+{selectedGame && (
+<>
+<div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+<h3 className="font-bold mb-2">Submission Status</h3>
+<p className="text-green-700">✓ Submitted: {submissions.length} users</p>
+<p className="text-red-700">✗ Not Submitted: {usersWhoDidntSubmit.length} users</p>
+{usersWhoDidntSubmit.length > 0 && (
+<p className="text-sm text-gray-600 mt-2">
+{usersWhoDidntSubmit.map(u => u.username).join(', ')}
+</p>
+)}
+</div>
+<div className="space-y-6">
+{submissions.map(sub => {
+const user = users.find(u => u.id === sub.user_id);
+const { total, detailed } = calculateUserPoints(sub.predictions, matches);
+
+return (
+<div key={sub.id} className="border rounded-lg p-4">
+<div className="flex justify-between items-center mb-3">
+<h3 className="text-lg font-bold">{user?.username}</h3>
+<span className="text-lg font-bold text-green-600">Total: {total} pts</span>
+</div>
+<div className="space-y-2">
+{matches.map((match, idx) => {
+const pred = sub.predictions.find(p => p.match_id === match.id);
+const matchPoints = detailed[idx]?.points || 0;
+return (
+<div key={match.id} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+<div>
+<span className="font-semibold">
+{match.home_team} vs {match.away_team}
+{pred?.is_joker && <span className="ml-2 text-yellow-600">🃏</span>}
+</span>
+<br />
+<span className="text-sm text-gray-600">
+Predicted: {pred?.home_score || '?'} - {pred?.away_score || '?'}
+</span>
+</div>
+<div className="text-right">
+<div className="font-bold">
+Actual: {match.home_score || '?'} - {match.away_score || '?'}
+</div>
+{matchPoints > 0 ? (
+<span className="text-green-600 font-semibold">+{matchPoints} pts</span>
+) : (
+<span className="text-gray-500 text-sm">0 pts</span>
+)}
+</div>
+</div>
+);
+})}
+</div>
+</div>
+);
+})}
+</div>
+</>
+)}
+</div>
+);
+};
+const ManageUsers = ({ users, loadData }) => {
+const [showForm, setShowForm] = React.useState(false);
+const [editingUser, setEditingUser] = React.useState(null);
+const [formData, setFormData] = React.useState({ username: '', password: '', initial_password: '', is_admin: false });
+const handleSubmit = async (e) => {
+e.preventDefault();
+if (editingUser) {
+await supabase.from('users').update(formData).eq('id', editingUser.id);
+} else {
+await supabase.from('users').insert([formData]);
+}
+setShowForm(false);
+setEditingUser(null);
+setFormData({ username: '', password: '', initial_password: '', is_admin: false });
+loadData();
+};
+return (
+<div>
+{!showForm ? (
+<>
+<button
+onClick={() => setShowForm(true)}
+className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg mb-6"
+>
++ Add New User
+</button>
+<div className="overflow-x-auto">
+<table className="w-full border-collapse">
+<thead>
+<tr className="bg-gray-200">
+<th className="border p-3 text-left">Username</th>
+<th className="border p-3 text-left">Password</th>
+<th className="border p-3 text-left">Initial Password</th>
+<th className="border p-3 text-left">Admin</th>
+<th className="border p-3 text-left">Actions</th>
+</tr>
+</thead>
+<tbody>
+{users.map(user => (
+<tr key={user.id} className="hover:bg-gray-50">
+<td className="border p-3">{user.username}</td>
+<td className="border p-3">{user.password}</td>
+<td className="border p-3">{user.initial_password || '-'}</td>
+<td className="border p-3">{user.is_admin ? 'Yes' : 'No'}</td>
+<td className="border p-3">
+<button
+onClick={() => {
+setEditingUser(user);
+setFormData(user);
+setShowForm(true);
+}}
+className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+>
+Edit
+</button>
+</td>
+</tr>
+))}
+</tbody>
+</table>
+</div>
+</>
+) : (
+<form onSubmit={handleSubmit} className="space-y-4">
+<div>
+<label className="block text-gray-700 font-semibold mb-2">Username</label>
+<input
+type="text"
+value={formData.username}
+onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+className="w-full px-4 py-2 border rounded-lg"
+required
+/>
+</div>
+<div>
+<label className="block text-gray-700 font-semibold mb-2">Password</label>
+<input
+type="text"
+value={formData.password}
+onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+className="w-full px-4 py-2 border rounded-lg"
+required
+/>
+</div>
+<div>
+<label className="block text-gray-700 font-semibold mb-2">Initial Password (Optional)</label>
+<input
+type="text"
+value={formData.initial_password || ''}
+onChange={(e) => setFormData({ ...formData, initial_password: e.target.value || null })}
+className="w-full px-4 py-2 border rounded-lg"
+/>
+</div>
+<div className="flex items-center">
+<input
+type="checkbox"
+checked={formData.is_admin}
+onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked })}
+className="mr-2"
+/>
+<label className="text-gray-700 font-semibold">Is Admin</label>
+</div>
+<div className="flex gap-4">
+<button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg">
+{editingUser ? 'Update' : 'Create'} User
+</button>
+<button
+type="button"
+onClick={() => {
+setShowForm(false);
+setEditingUser(null);
+}}
+className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg"
+>
+Cancel
+</button>
+</div>
+</form>
+)}
+</div>
+);
+};
+const Leaderboard = ({ gamesLists, users }) => {
+const [selectedGame, setSelectedGame] = React.useState(null);
+const [leaderboardData, setLeaderboardData] = React.useState([]);
+const [overallLeaderboard, setOverallLeaderboard] = React.useState([]);
+React.useEffect(() => {
+calculateOverallLeaderboard();
+}, [gamesLists, users]);
+React.useEffect(() => {
+if (selectedGame) {
+calculateLeaderboard();
+}
+}, [selectedGame]);
+const calculateLeaderboard = async () => {
+const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const submissions = await response1.json();
+const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matches = await response2.json();
+const scores = submissions.map(sub => {
+const user = users.find(u => u.id === sub.user_id);
+const { total } = calculateUserPoints(sub.predictions, matches);
+return { username: user?.username, points: total };
+});
+scores.sort((a, b) => b.points - a.points);
+setLeaderboardData(scores);
+};
+const calculateOverallLeaderboard = async () => {
+const userScores = {};
+for (const game of gamesLists) {
+const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const submissions = await response1.json();
+const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matches = await response2.json();
+submissions?.forEach(sub => {
+const user = users.find(u => u.id === sub.user_id);
+if (!user) return;
+const { total } = calculateUserPoints(sub.predictions, matches);
+userScores[user.username] = (userScores[user.username] || 0) + total;
+});
+}
+const scores = Object.entries(userScores).map(([username, points]) => ({ username, points }));
+scores.sort((a, b) => b.points - a.points);
+setOverallLeaderboard(scores);
+};
+return (
+<div>
+<div className="mb-6">
+<h2 className="text-2xl font-bold mb-4">Overall Leaderboard</h2>
+<div className="bg-gradient-to-r from-yellow-400 to-yellow-600 rounded-lg p-6 shadow-lg">
+{overallLeaderboard.map((entry, idx) => (
+<div key={entry.username} className="flex justify-between items-center p-3 mb-2 bg-white rounded-lg">
+<div className="flex items-center gap-3">
+<span className="text-2xl font-bold text-gray-500">#{idx + 1}</span>
+<span className="font-semibold text-lg">{entry.username}</span>
+</div>
+<span className="text-2xl font-bold text-green-600">{entry.points}</span>
+</div>
+))}
+</div>
+</div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Week Leaderboard</label>
+<select
+onChange={(e) => setSelectedGame(gamesLists.find(g => g.id === parseInt(e.target.value)))}
+className="w-full px-4 py-2 border rounded-lg"
+>
+<option value="">-- Select Week --</option>
+{gamesLists.map(game => (
+<option key={game.id} value={game.id}>Week {game.week_number}</option>
+))}
+</select>
+</div>
+{selectedGame && leaderboardData.length > 0 && (
+<div className="bg-green-50 rounded-lg p-6">
+{leaderboardData.map((entry, idx) => (
+<div key={entry.username} className="flex justify-between items-center p-3 mb-2 bg-white rounded-lg">
+<div className="flex items-center gap-3">
+<span className="text-xl font-bold text-gray-500">#{idx + 1}</span>
+<span className="font-semibold">{entry.username}</span>
+</div>
+<span className="text-xl font-bold text-green-600">{entry.points}</span>
+</div>
+))}
+</div>
+)}
+</div>
+);
+};
+const UserView = ({ user, handleLogout }) => {
+const [activeTab, setActiveTab] = React.useState('predictions');
+const [gamesLists, setGamesLists] = React.useState([]);
+const [selectedGame, setSelectedGame] = React.useState(null);
+const [matches, setMatches] = React.useState([]);
+const [predictions, setPredictions] = React.useState([]);
+const [joker, setJoker] = React.useState(null);
+const [hasSubmitted, setHasSubmitted] = React.useState(false);
+const [users, setUsers] = React.useState([]);
+React.useEffect(() => {
+loadGamesLists();
+loadUsers();
+}, []);
+React.useEffect(() => {
+if (selectedGame) {
+loadMatches();
+checkSubmission();
+}
+}, [selectedGame]);
+const loadGamesLists = async () => {
+const { data } = await supabase.from('games_lists').select('*').order('deadline', { ascending: false });
+setGamesLists(data || []);
+};
+const loadUsers = async () => {
+const { data } = await supabase.from('users').select('*');
+setUsers(data || []);
+};
+const loadMatches = async () => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const data = await response.json();
+setMatches(data || []);
+setPredictions(data?.map(m => ({ match_id: m.id, home_score: '', away_score: '', is_joker: false })) || []);
+};
+const checkSubmission = async () => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&user_id=eq.${user.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const data = await response.json();
+if (data && data.length > 0) {
+setHasSubmitted(true);
+setPredictions(data[0].predictions);
+setJoker(data[0].predictions.find(p => p.is_joker)?.match_id);
+} else {
+setHasSubmitted(false);
+}
+};
+const handleSubmit = async () => {
+if (!predictions.every(p => p.home_score !== '' && p.away_score !== '')) {
+alert('Please complete all predictions');
+return;
+}
+if (!joker) {
+alert('Please select a joker');
+return;
+}
+const submissionData = {
+games_list_id: selectedGame.id,
+user_id: user.id,
+predictions: predictions.map(p => ({
+...p,
+is_joker: p.match_id === joker
+}))
+};
+await supabase.from('predictions').upsert([submissionData]);
+setHasSubmitted(true);
+alert('Predictions submitted successfully!');
+};
+const isPastDeadline = selectedGame && new Date(selectedGame.deadline) < new Date();
+return (
+<div className="min-h-screen bg-gray-100">
+<nav className="bg-green-800 text-white p-4 shadow-lg">
+<div className="container mx-auto flex justify-between items-center">
+<div className="flex items-center gap-3">
+<span className="text-3xl">⚽</span>
+<h1 className="text-2xl font-bold">Football Predictions</h1>
+</div>
+<div className="flex items-center gap-4">
+<span>Welcome, {user.username}</span>
+<button onClick={handleLogout} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+Logout
+</button>
+</div>
+</div>
+</nav>
+<div className="container mx-auto p-6">
+<div className="bg-white rounded-lg shadow-lg mb-6">
+<div className="flex border-b">
+<button
+onClick={() => setActiveTab('predictions')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'predictions' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+Make Predictions
+</button>
+<button
+onClick={() => setActiveTab('leaderboard')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'leaderboard' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+Leaderboard
+</button>
+<button
+onClick={() => setActiveTab('results')}
+className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'results' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+View Results
+</button>
+</div>
+<div className="p-6">
+{activeTab === 'predictions' && (
+<div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Select Week</label>
+<select
+onChange={(e) => setSelectedGame(gamesLists.find(g => g.id === parseInt(e.target.value)))}
+className="w-full px-4 py-2 border rounded-lg"
+>
+<option value="">-- Select Week --</option>
+{gamesLists.map(game => (
+<option key={game.id} value={game.id}>
+Week {game.week_number} (Deadline: {new Date(game.deadline).toLocaleString()})
+</option>
+))}
+</select>
+</div>
+{selectedGame && (
+<>
+{isPastDeadline && (
+<div className="mb-4 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
+The deadline for this week has passed. You cannot submit or modify predictions.
+</div>
+)}
+{hasSubmitted && !isPastDeadline && (
+<div className="mb-4 p-4 bg-blue-100 border border-blue-300 rounded-lg text-blue-700">
+You have already submitted predictions for this week. You can update them before the deadline.
+</div>
+)}
+<div className="space-y-4">
+{matches.map((match, idx) => (
+<div key={match.id} className="border rounded-lg p-4">
+<div className="flex items-center justify-between mb-3">
+<h3 className="text-lg font-bold">
+Match {match.match_number}: {match.home_team} vs {match.away_team}
+</h3>
+{!isPastDeadline && (
+<button
+onClick={() => setJoker(match.id)}
+className={`px-4 py-2 rounded-lg ${joker === match.id ? 'bg-yellow-500 text-white' : 'bg-gray-200'}`}
+>
+{joker === match.id ? '🃏 Joker' : 'Set as Joker'}
+</button>
+)}
+</div>
+<div className="flex gap-4 items-center">
+<input
+type="text"
+placeholder="Home"
+value={predictions[idx]?.home_score || ''}
+onChange={(e) => {
+const val = e.target.value.toUpperCase();
+const newPreds = [...predictions];
+newPreds[idx].home_score = val === 'C' ? 'C' : val;
+setPredictions(newPreds);
+}}
+className="w-24 px-3 py-2 border rounded-lg text-center"
+disabled={isPastDeadline}
+/>
+<span className="text-2xl font-bold">-</span>
+<input
+type="text"
+placeholder="Away"
+value={predictions[idx]?.away_score || ''}
+onChange={(e) => {
+const val = e.target.value.toUpperCase();
+const newPreds = [...predictions];
+newPreds[idx].away_score = val === 'C' ? 'C' : val;
+setPredictions(newPreds);
+}}
+className="w-24 px-3 py-2 border rounded-lg text-center"
+disabled={isPastDeadline}
+/>
+</div>
+</div>
+))}
+</div>
+{!isPastDeadline && (
+<button
+onClick={handleSubmit}
+className="mt-6 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg"
+>
+{hasSubmitted ? 'Update' : 'Submit'} Predictions
+</button>
+)}
+</>
+)}
+</div>
+)}
+{activeTab === 'leaderboard' && <Leaderboard gamesLists={gamesLists} users={users} />}
+{activeTab === 'results' && <ViewResults gamesLists={gamesLists} users={users} user={user} />}
+</div>
+</div>
+</div>
+</div>
+);
+};
+const ViewResults = ({ gamesLists, users, user }) => {
+const [selectedGame, setSelectedGame] = React.useState(null);
+const [matches, setMatches] = React.useState([]);
+const [allPredictions, setAllPredictions] = React.useState([]);
+React.useEffect(() => {
+if (selectedGame) {
+loadResults();
+}
+}, [selectedGame]);
+const loadResults = async () => {
+const response1 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const matchData = await response1.json();
+const response2 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+const preds = await response2.json();
+setMatches(matchData || []);
+setAllPredictions(preds || []);
+};
+const isPastDeadline = selectedGame && new Date(selectedGame.deadline) < new Date();
+return (
+<div>
+<div className="mb-6">
+<label className="block text-gray-700 font-semibold mb-2">Select Week</label>
+<select
+onChange={(e) => setSelectedGame(gamesLists.find(g => g.id === parseInt(e.target.value)))}
+className="w-full px-4 py-2 border rounded-lg"
+>
+<option value="">-- Select Week --</option>
+{gamesLists.map(game => (
+<option key={game.id} value={game.id}>Week {game.week_number}</option>
+))}
+</select>
+</div>
+{selectedGame && !isPastDeadline && (
+<div className="mb-6 p-4 bg-yellow-100 border border-yellow-300 rounded-lg text-yellow-800">
+Results will be visible after the deadline passes.
+</div>
+)}
+{selectedGame && isPastDeadline && (
+<div className="space-y-6">
+{allPredictions.map(pred => {
+const predUser = users.find(u => u.id === pred.user_id);
+const { total, detailed } = calculateUserPoints(pred.predictions, matches);
+return (
+<div key={pred.id} className="border rounded-lg p-4">
+<div className="flex justify-between items-center mb-3">
+<h3 className="text-xl font-bold">{predUser?.username}</h3>
+<span className="text-lg font-bold text-green-600">Total: {total} pts</span>
+</div>
+<div className="space-y-2">
+{matches.map((match, idx) => {
+const userPred = pred.predictions.find(p => p.match_id === match.id);
+const matchPoints = detailed[idx]?.points || 0;
+return (
+<div key={match.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+<div>
+<span className="font-semibold">
+{match.home_team} vs {match.away_team}
+{userPred?.is_joker && <span className="ml-2 text-yellow-600">🃏</span>}
+</span>
+<br />
+<span className="text-sm text-gray-600">
+Predicted: {userPred?.home_score} - {userPred?.away_score}
+</span>
+</div>
+<div className="text-right">
+<div className="font-bold">
+Actual: {match.home_score || '?'} - {match.away_score || '?'}
+</div>
+{matchPoints > 0 && (
+<span className="text-green-600 font-semibold">+{matchPoints} pts</span>
+)}
+{matchPoints === 0 && (
+<span className="text-gray-500 text-sm">0 pts</span>
+)}
+</div>
+</div>
+);
+})}
+</div>
+</div>
+);
+})}
+</div>
+)}
+</div>
+);
+};
+// ✅ React 18 ROOT
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
