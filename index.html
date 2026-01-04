@@ -1287,6 +1287,12 @@ className={`flex-1 py-4 px-6 font-semibold ${activeTab === 'results' ? 'bg-green
 >
 View Results
 </button>
+<button
+onClick={() => setActiveTab('rules')}
+className={`flex-1 py-4 px-6 font-semibold whitespace-nowrap ${activeTab === 'rules' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+>
+📖 Rules & Help
+</button>
 </div>
 <div className="p-6">
 {activeTab === 'predictions' && (
@@ -1379,6 +1385,7 @@ className="mt-6 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3
 )}
 {activeTab === 'leaderboard' && <Leaderboard gamesLists={gamesLists} users={users} />}
 {activeTab === 'results' && <ViewResults gamesLists={gamesLists} users={users} user={user} />}
+{activeTab === 'rules' && <RulesTab />}
 </div>
 </div>
 </div>
@@ -1472,6 +1479,167 @@ Actual: {match.home_score || '?'} - {match.away_score || '?'}
 </div>
 );
 };
+const RulesTab = () => (
+  <div className="max-w-4xl mx-auto">
+    <div className="bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg p-6 mb-6">
+      <h2 className="text-3xl font-bold mb-2">⚽ How to Play</h2>
+      <p className="text-green-100">Learn how to make predictions and score points!</p>
+    </div>
+
+    <div className="space-y-6">
+      {/* Getting Started */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+          <span className="text-3xl">🎯</span>
+          Getting Started
+        </h3>
+        <div className="space-y-3 text-gray-700">
+          <p><strong>1.</strong> Each week, a new games list will be created with 10 matches</p>
+          <p><strong>2.</strong> Go to the <strong>Make Predictions</strong> tab and select the week</p>
+          <p><strong>3.</strong> Predict the exact score for each match (e.g., 2-1, 0-0, 3-2)</p>
+          <p><strong>4.</strong> Choose ONE match as your <strong>Joker</strong> to double your points</p>
+          <p><strong>5.</strong> Submit your predictions before the deadline</p>
+          <p className="text-red-600 font-semibold mt-4">⚠️ You cannot change predictions after the deadline passes!</p>
+        </div>
+      </div>
+
+      {/* Scoring System */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+          <span className="text-3xl">📊</span>
+          Scoring System
+        </h3>
+        <div className="space-y-4">
+          <div className="border-l-4 border-green-500 pl-4 py-2 bg-green-50">
+            <p className="font-bold text-green-800">Correct Result (1 point)</p>
+            <p className="text-gray-600">You predicted the right outcome: Home Win, Away Win, or Draw</p>
+            <p className="text-sm text-gray-500 mt-1">Example: You predict 2-1, actual is 3-2 → Both home wins = 1 point</p>
+          </div>
+
+          <div className="border-l-4 border-blue-500 pl-4 py-2 bg-blue-50">
+            <p className="font-bold text-blue-800">Correct Home Score (1 point)</p>
+            <p className="text-gray-600">You predicted the home team's exact score</p>
+            <p className="text-sm text-gray-500 mt-1">Example: You predict 2-1, actual is 2-0 → Home score correct = 1 point</p>
+          </div>
+
+          <div className="border-l-4 border-purple-500 pl-4 py-2 bg-purple-50">
+            <p className="font-bold text-purple-800">Correct Away Score (1 point)</p>
+            <p className="text-gray-600">You predicted the away team's exact score</p>
+            <p className="text-sm text-gray-500 mt-1">Example: You predict 1-2, actual is 0-2 → Away score correct = 1 point</p>
+          </div>
+
+          <div className="border-l-4 border-yellow-500 pl-4 py-2 bg-yellow-50">
+            <p className="font-bold text-yellow-800">Exact Score Bonus (1 point)</p>
+            <p className="text-gray-600">You predicted BOTH scores exactly right</p>
+            <p className="text-sm text-gray-500 mt-1">Example: You predict 2-1, actual is 2-1 → Perfect! = Bonus point</p>
+          </div>
+
+          <div className="bg-gray-100 p-4 rounded-lg mt-4">
+            <p className="font-bold text-gray-800 mb-2">Maximum Points Per Match:</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-700">
+              <li><strong>4 points</strong> - Exact score (1 + 1 + 1 + 1 bonus)</li>
+              <li><strong>3 points</strong> - Correct result + both scores match</li>
+              <li><strong>2 points</strong> - Correct result + one score matches</li>
+              <li><strong>1 point</strong> - Just correct result OR just one score</li>
+              <li><strong>0 points</strong> - Nothing correct</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* Joker Explained */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+          <span className="text-3xl">🃏</span>
+          The Joker
+        </h3>
+        <div className="space-y-3 text-gray-700">
+          <p className="text-lg font-semibold text-yellow-600">Double your points on ONE match!</p>
+          <p>Before submitting your predictions, you must select ONE match as your <strong>Joker</strong>. Whatever points you score on that match will be <strong>doubled</strong>.</p>
+          
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-4">
+            <p className="font-bold text-yellow-800 mb-2">💡 Strategy Tips:</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-700">
+              <li>Choose the match you feel most confident about</li>
+              <li>A safe 0-0 or 1-1 prediction could guarantee 4 or 8 points</li>
+              <li>Or risk it on a high-scoring match for bigger rewards</li>
+              <li>If you get 4 points with Joker → You receive 8 points total!</li>
+            </ul>
+          </div>
+
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
+            <p className="font-bold text-red-800">⚠️ Cancelled Matches:</p>
+            <p className="text-gray-700">If your Joker match is cancelled or postponed (marked as "C"), your Joker automatically moves to the first valid match in the list.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Examples */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+          <span className="text-3xl">💡</span>
+          Examples
+        </h3>
+        
+        <div className="space-y-4">
+          <div className="border rounded-lg p-4 bg-green-50">
+            <p className="font-bold text-green-800 mb-2">Example 1: Perfect Prediction 🎯</p>
+            <p className="text-gray-700">Prediction: <strong>2-1</strong> | Actual: <strong>2-1</strong></p>
+            <p className="text-sm text-gray-600 mt-2">✓ Correct result (+1) ✓ Home score (+1) ✓ Away score (+1) ✓ Exact bonus (+1) = <strong className="text-green-600">4 points</strong></p>
+            <p className="text-sm text-yellow-600 mt-1">🃏 If this was your Joker: <strong>8 points!</strong></p>
+          </div>
+
+          <div className="border rounded-lg p-4 bg-blue-50">
+            <p className="font-bold text-blue-800 mb-2">Example 2: Close but not exact</p>
+            <p className="text-gray-700">Prediction: <strong>2-1</strong> | Actual: <strong>3-1</strong></p>
+            <p className="text-sm text-gray-600 mt-2">✓ Correct result (+1) ✗ Home score (0) ✓ Away score (+1) = <strong className="text-blue-600">2 points</strong></p>
+          </div>
+
+          <div className="border rounded-lg p-4 bg-purple-50">
+            <p className="font-bold text-purple-800 mb-2">Example 3: Right result, wrong scores</p>
+            <p className="text-gray-700">Prediction: <strong>2-0</strong> | Actual: <strong>1-0</strong></p>
+            <p className="text-sm text-gray-600 mt-2">✓ Correct result (+1) ✗ Home score (0) ✓ Away score (+1) = <strong className="text-purple-600">2 points</strong></p>
+          </div>
+
+          <div className="border rounded-lg p-4 bg-gray-50">
+            <p className="font-bold text-gray-800 mb-2">Example 4: Wrong result</p>
+            <p className="text-gray-700">Prediction: <strong>2-0</strong> (Home Win) | Actual: <strong>0-2</strong> (Away Win)</p>
+            <p className="text-sm text-gray-600 mt-2">✗ Wrong result (0) ✗ Home score (0) ✗ Away score (0) = <strong className="text-red-600">0 points</strong></p>
+          </div>
+        </div>
+      </div>
+
+      {/* Leaderboard */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+          <span className="text-3xl">🏆</span>
+          Leaderboards
+        </h3>
+        <div className="space-y-3 text-gray-700">
+          <p><strong>Weekly Leaderboard:</strong> See who scored the most points in each individual week</p>
+          <p><strong>Overall Leaderboard:</strong> Tracks cumulative points across ALL weeks - the season champion!</p>
+          <p className="text-green-600 font-semibold mt-4">🎯 Compete with your friends and climb to the top!</p>
+        </div>
+      </div>
+
+      {/* Tips */}
+      <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-lg p-6">
+        <h3 className="text-2xl font-bold mb-4 flex items-center gap-2">
+          <span className="text-3xl">💪</span>
+          Pro Tips
+        </h3>
+        <ul className="space-y-2">
+          <li>✓ Submit early to avoid missing the deadline</li>
+          <li>✓ You can update predictions anytime before the deadline</li>
+          <li>✓ Use the Joker wisely - it can make or break your week</li>
+          <li>✓ Check the View Results tab after the deadline to see how you did</li>
+          <li>✓ Study the leaderboard to see what strategies work best</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+);
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 </script>
