@@ -120,21 +120,6 @@ resolve({ error: null });
 }
 })
 }),
-upsert: (records) => ({
-then: async (resolve) => {
-const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-method: 'POST',
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-'Content-Type': 'application/json',
-'Prefer': 'resolution=merge-duplicates'
-},
-body: JSON.stringify(records)
-});
-resolve({ error: null });
-}
-}),
 delete: () => ({
 eq: (column, value) => ({
 then: async (resolve) => {
@@ -149,15 +134,29 @@ headers: {
 resolve({ error: null });
 }
 })
+}),
+upsert: (records) => ({
+then: async (resolve) => {
+const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+method: 'POST',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+'Content-Type': 'application/json',
+'Prefer': 'resolution=merge-duplicates'
+},
+body: JSON.stringify(records)
+});
+resolve({ error: null });
+}
 })
 })
 };
 
-// ✅ FIXED SCORING LOGIC — Handles strings & "C"
+// ✅ FIXED SCORING — handles "C" and string numbers
 const calculateUserPoints = (predictions, matches) => {
   const originalJoker = predictions.find(p => p.is_joker);
   let effectiveJokerMatchId = null;
-
   if (originalJoker) {
     const jokerMatch = matches.find(m => m.id === originalJoker.match_id);
     if (jokerMatch && jokerMatch.home_score === 'C' && jokerMatch.away_score === 'C') {
@@ -167,58 +166,37 @@ const calculateUserPoints = (predictions, matches) => {
       effectiveJokerMatchId = originalJoker.match_id;
     }
   }
-
   let total = 0;
   const detailed = predictions.map(pred => {
     const match = matches.find(m => m.id === pred.match_id);
     if (!match) return { points: 0 };
-
-    if (match.home_score === 'C' || match.away_score === 'C') {
-      return { points: 0 };
-    }
-
+    if (match.home_score === 'C' || match.away_score === 'C') return { points: 0 };
     const actualHome = parseInt(match.home_score);
     const actualAway = parseInt(match.away_score);
-    if (isNaN(actualHome) || isNaN(actualAway)) {
-      return { points: 0 };
-    }
-
+    if (isNaN(actualHome) || isNaN(actualAway)) return { points: 0 };
     let predHome = pred.home_score;
     let predAway = pred.away_score;
-    if (predHome === 'C' || predAway === 'C') {
-      return { points: 0 };
-    }
-
+    if (predHome === 'C' || predAway === 'C') return { points: 0 };
     predHome = parseInt(predHome);
     predAway = parseInt(predAway);
-    if (isNaN(predHome) || isNaN(predAway)) {
-      return { points: 0 };
-    }
-
+    if (isNaN(predHome) || isNaN(predAway)) return { points: 0 };
     let points = 0;
     if (predHome === actualHome) points += 1;
     if (predAway === actualAway) points += 1;
-
     const predResult = predHome > predAway ? 'H' : predHome < predAway ? 'A' : 'D';
     const actualResult = actualHome > actualAway ? 'H' : actualHome < actualAway ? 'A' : 'D';
     if (predResult === actualResult) points += 1;
-
     if (predHome === actualHome && predAway === actualAway) points += 1;
-
-    if (match.id === effectiveJokerMatchId) {
-      points *= 2;
-    }
-
+    if (match.id === effectiveJokerMatchId) points *= 2;
     return { points };
   });
-
   return {
     total: detailed.reduce((sum, d) => sum + d.points, 0),
     detailed
   };
 };
 
-// ✅ DELETE UTILS
+// ✅ UTILS
 const deleteWeek = async (gameId, weekNumber, loadData) => {
   if (!confirm(`Delete Week ${weekNumber}? This removes all matches and predictions.`)) return;
   await supabase.from('games_lists').delete().eq('id', gameId);
@@ -233,65 +211,6 @@ const deleteUser = async (userId, username, loadData) => {
   loadData();
 };
 
-// ✅ CSV EXPORTS
-const exportSelectedWeek = (gamesLists, selectedGame, submissions, matches, users) => {
-  if (!selectedGame) return;
-  const weekNumber = selectedGame.week_number;
-  let csvContent = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
-
-  submissions.forEach(sub => {
-    const user = users.find(u => u.id === sub.user_id);
-    if (!user) return;
-    const { total, detailed } = calculateUserPoints(sub.predictions, matches);
-    matches.forEach((match, idx) => {
-      const pred = sub.predictions.find(p => p.match_id === match.id);
-      const actualHome = match.home_score ?? '';
-      const actualAway = match.away_score ?? '';
-      const predHome = pred?.home_score ?? '';
-      const predAway = pred?.away_score ?? '';
-      const isJoker = pred?.is_joker ? 'Yes' : 'No';
-      const points = detailed[idx]?.points || 0;
-      const totalForRow = idx === 0 ? total : '';
-      csvContent += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
-    });
-  });
-  downloadCSV(csvContent, `Week_${weekNumber}_Submissions.csv`);
-};
-
-const exportAllWeeks = async (gamesLists, users) => {
-  let csvContent = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
-
-  for (const game of gamesLists) {
-    const weekNumber = game.week_number;
-    const resMatches = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    const matches = await resMatches.json();
-    const resSubs = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
-      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    const submissions = await resSubs.json();
-
-    submissions.forEach(sub => {
-      const user = users.find(u => u.id === sub.user_id);
-      if (!user) return;
-      const { total, detailed } = calculateUserPoints(sub.predictions, matches);
-      matches.forEach((match, idx) => {
-        const pred = sub.predictions.find(p => p.match_id === match.id);
-        const actualHome = match.home_score ?? '';
-        const actualAway = match.away_score ?? '';
-        const predHome = pred?.home_score ?? '';
-        const predAway = pred?.away_score ?? '';
-        const isJoker = pred?.is_joker ? 'Yes' : 'No';
-        const points = detailed[idx]?.points || 0;
-        const totalForRow = idx === 0 ? total : '';
-        csvContent += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
-      });
-    });
-  }
-  downloadCSV(csvContent, `All_Weeks_Submissions.csv`);
-};
-
 const downloadCSV = (csv, filename) => {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -302,8 +221,7 @@ const downloadCSV = (csv, filename) => {
   URL.revokeObjectURL(url);
 };
 
-// --- Rest of App Components (unchanged except ManageUsers) ---
-
+// --- COMPONENTS ---
 const App = () => {
 const [user, setUser] = React.useState(null);
 const [view, setView] = React.useState('login');
@@ -531,10 +449,13 @@ Leaderboard
 );
 };
 const ManageGames = ({ gamesLists, loadData }) => {
+
 const [showForm, setShowForm] = React.useState(false);
 const [editingGame, setEditingGame] = React.useState(null);
 const [originalMatches, setOriginalMatches] = React.useState([]);
+const [submitting, setSubmitting] = React.useState(false);
 const [formData, setFormData] = React.useState({
+
 week_number: '',
 deadline: '',
 matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
@@ -572,73 +493,138 @@ setFormData(prev => ({ ...prev, matches }));
 };
 reader.readAsText(file);
 };
-const handleSubmit = async (e) => {
-e.preventDefault();
-await supabase
-.from('games_lists')
-.update({
-week_number: formData.week_number,
-deadline: formData.deadline
-})
-.eq('id', editingGame.id);
-for (let i = 0; i < formData.matches.length; i++) {
-const matchData = formData.matches[i];
-const orig = originalMatches.find(m => m.match_number === i + 1);
-if (orig) {
-await supabase
-.from('matches')
-.update({
-home_team: matchData.home_team,
-away_team: matchData.away_team,
-home_score: matchData.home_score === '' ? null : matchData.home_score,
-away_score: matchData.away_score === '' ? null : matchData.away_score
-})
-.eq('id', orig.id);
+const removeMatch = (index) => {
+const newMatches = [...formData.matches];
+newMatches.splice(index, 1);
+while (newMatches.length < 1) {
+newMatches.push({ home_team: '', away_team: '', home_score: null, away_score: null });
 }
-}
-setShowForm(false);
-setEditingGame(null);
-setOriginalMatches([]);
-setFormData({
-week_number: '',
-deadline: '',
-matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
-});
-loadData();
+setFormData({ ...formData, matches: newMatches });
 };
+
+
+// ✅ FIXED: CREATE + UPDATE + REFRESH
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setSubmitting(true);
+  try {
+    if (editingGame) {
+      // UPDATE
+      await supabase
+        .from('games_lists')
+        .update({
+          week_number: formData.week_number,
+          deadline: formData.deadline
+        })
+        .eq('id', editingGame.id);
+      for (let i = 0; i < formData.matches.length; i++) {
+        const matchData = formData.matches[i];
+        const orig = originalMatches.find(m => m.match_number === i + 1);
+        if (orig) {
+          await supabase
+            .from('matches')
+            .update({
+              home_team: matchData.home_team,
+              away_team: matchData.away_team,
+              home_score: matchData.home_score === '' ? null : matchData.home_score,
+              away_score: matchData.away_score === '' ? null : matchData.away_score
+            })
+            .eq('id', orig.id);
+        }
+      }
+      alert('Week updated successfully!');
+    } else {
+      // CREATE
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/games_lists`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify({
+          week_number: parseInt(formData.week_number),
+          deadline: formData.deadline
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create week');
+      }
+
+      const [newGame] = await response.json();
+
+      const validMatches = formData.matches.filter(m => m.home_team.trim() && m.away_team.trim());
+      if (validMatches.length > 0) {
+        const matchesToInsert = validMatches.map((match, idx) => ({
+          games_list_id: newGame.id,
+          match_number: idx + 1,
+          home_team: match.home_team.trim(),
+          away_team: match.away_team.trim(),
+          home_score: match.home_score === '' ? null : match.home_score,
+          away_score: match.away_score === '' ? null : match.away_score
+        }));
+        await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(matchesToInsert)
+        });
+      }
+      alert('Week created successfully!');
+    }
+
+    // Reset form and close
+    setShowForm(false);
+    setEditingGame(null);
+    setOriginalMatches([]);
+    setFormData({
+      week_number: '',
+      deadline: '',
+      matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
+    });
+
+    // Reload data
+    await loadData();
+  } catch (error) {
+    console.error('Error:', error);
+    alert('An error occurred. Please try again.');
+  } finally {
+    setSubmitting(false);
+  }
+};
+
+
+
+
 const handleEdit = async (game) => {
-const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matches = await response.json();
+const matches = await res.json();
+const padded = [...matches];
+while (padded.length < 10) padded.push({ home_team: '', away_team: '', home_score: null, away_score: null });
 setEditingGame(game);
 setOriginalMatches(matches);
 setFormData({
 week_number: game.week_number,
 deadline: game.deadline,
-matches: matches || Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
+matches: padded
 });
 setShowForm(true);
 };
 const handleExportCSV = async (gameId) => {
-const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${gameId}&select=*&order=match_number.asc`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${gameId}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matches = await response.json();
+const matches = await res.json();
 const csv = 'Home Team,Away Team,Home Score,Away Score\n' +
 matches.map(m => `${m.home_team},${m.away_team},${m.home_score || ''},${m.away_score || ''}`).join('\n');
-const blob = new Blob([csv], { type: 'text/csv' });
-const url = window.URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
-a.download = `week_${formData.week_number}_matches.csv`;
-a.click();
+downloadCSV(csv, `week_${formData.week_number}_matches.csv`);
 };
 return (
 <div>
@@ -671,7 +657,6 @@ className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
 >
 Export CSV
 </button>
-{/* ✅ DELETE WEEK BUTTON */}
 <button
 onClick={() => deleteWeek(game.id, game.week_number, loadData)}
 className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
@@ -689,45 +674,56 @@ Delete Week
 <div className="grid grid-cols-2 gap-4">
 <div>
 <label className="block text-gray-700 font-semibold mb-2">Week Number</label>
+
 <input
 type="number"
 value={formData.week_number}
 onChange={(e) => setFormData({ ...formData, week_number: e.target.value })}
 className="w-full px-4 py-2 border rounded-lg"
 required
+disabled={submitting}
 />
+
 </div>
 <div>
 <label className="block text-gray-700 font-semibold mb-2">Deadline</label>
+
 <input
 type="datetime-local"
 value={formData.deadline}
 onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
 className="w-full px-4 py-2 border rounded-lg"
 required
+disabled={submitting}
 />
+
 </div>
 </div>
 <div className="flex gap-4 mb-4">
+
 <button
 type="button"
 onClick={() => document.getElementById('csv-input').click()}
 className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg"
+disabled={submitting}
 >
-📁 Import from CSV
+📄 Import from CSV
 </button>
+
 <input
 id="csv-input"
 type="file"
 accept=".csv"
 onChange={handleFileUpload}
 className="hidden"
+disabled={submitting}
 />
+
 </div>
 <div className="space-y-4">
 <h3 className="text-lg font-bold">Matches</h3>
 {formData.matches.map((match, idx) => (
-<div key={idx} className="grid grid-cols-6 gap-2 items-center border p-3 rounded-lg">
+<div key={idx} className="grid grid-cols-7 gap-2 items-center border p-3 rounded-lg">
 <div className="font-semibold">#{idx + 1}</div>
 <input
 type="text"
@@ -739,7 +735,6 @@ newMatches[idx].home_team = e.target.value;
 setFormData({ ...formData, matches: newMatches });
 }}
 className="px-3 py-2 border rounded"
-required
 />
 <input
 type="text"
@@ -751,7 +746,6 @@ newMatches[idx].away_team = e.target.value;
 setFormData({ ...formData, matches: newMatches });
 }}
 className="px-3 py-2 border rounded"
-required
 />
 <input
 type="text"
@@ -763,7 +757,7 @@ const val = e.target.value.toUpperCase();
 newMatches[idx].home_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
 setFormData({ ...formData, matches: newMatches });
 }}
-className="px-3 py-2 border rounded"
+className="px-3 py-2 border rounded w-16"
 />
 <input
 type="text"
@@ -775,18 +769,28 @@ const val = e.target.value.toUpperCase();
 newMatches[idx].away_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
 setFormData({ ...formData, matches: newMatches });
 }}
-className="px-3 py-2 border rounded"
+className="px-3 py-2 border rounded w-16"
 />
+<button
+type="button"
+onClick={() => removeMatch(idx)}
+className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg"
+>
+Remove
+</button>
 </div>
 ))}
 </div>
 <div className="flex gap-4">
+
 <button
 type="submit"
-className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg"
+className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+disabled={submitting}
 >
-{editingGame ? 'Update' : 'Create'} Games List
+{submitting ? 'Processing...' : (editingGame ? 'Update' : 'Create')} Games List
 </button>
+
 <button
 type="button"
 onClick={() => {
@@ -795,9 +799,11 @@ setEditingGame(null);
 setOriginalMatches([]);
 }}
 className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg"
+disabled={submitting}
 >
 Cancel
 </button>
+
 </div>
 </form>
 )}
@@ -809,27 +815,72 @@ const [selectedGame, setSelectedGame] = React.useState(null);
 const [submissions, setSubmissions] = React.useState([]);
 const [matches, setMatches] = React.useState([]);
 React.useEffect(() => {
-if (selectedGame) {
-loadSubmissions();
-}
+if (selectedGame) loadSubmissions();
 }, [selectedGame]);
 const loadSubmissions = async () => {
-const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const subs = await response1.json();
-const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const subs = await res1.json();
+const res2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matchData = await response2.json();
+const matchData = await res2.json();
 setSubmissions(subs || []);
 setMatches(matchData || []);
+};
+const exportSelectedWeek = (gamesLists, selectedGame, submissions, matches, users) => {
+if (!selectedGame) return;
+const weekNumber = selectedGame.week_number;
+let csv = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
+submissions.forEach(sub => {
+const user = users.find(u => u.id === sub.user_id);
+if (!user) return;
+const { total, detailed } = calculateUserPoints(sub.predictions, matches);
+matches.forEach((match, idx) => {
+const pred = sub.predictions.find(p => p.match_id === match.id);
+const actualHome = match.home_score ?? '';
+const actualAway = match.away_score ?? '';
+const predHome = pred?.home_score ?? '';
+const predAway = pred?.away_score ?? '';
+const isJoker = pred?.is_joker ? 'Yes' : 'No';
+const points = detailed[idx]?.points || 0;
+const totalForRow = idx === 0 ? total : '';
+csv += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
+});
+});
+downloadCSV(csv, `Week_${weekNumber}_Submissions.csv`);
+};
+const exportAllWeeks = async (gamesLists, users) => {
+let csv = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
+for (const game of gamesLists) {
+const weekNumber = game.week_number;
+const resM = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+});
+const matches = await resM.json();
+const resS = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+});
+const submissions = await resS.json();
+submissions.forEach(sub => {
+const user = users.find(u => u.id === sub.user_id);
+if (!user) return;
+const { total, detailed } = calculateUserPoints(sub.predictions, matches);
+matches.forEach((match, idx) => {
+const pred = sub.predictions.find(p => p.match_id === match.id);
+const actualHome = match.home_score ?? '';
+const actualAway = match.away_score ?? '';
+const predHome = pred?.home_score ?? '';
+const predAway = pred?.away_score ?? '';
+const isJoker = pred?.is_joker ? 'Yes' : 'No';
+const points = detailed[idx]?.points || 0;
+const totalForRow = idx === 0 ? total : '';
+csv += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
+});
+});
+}
+downloadCSV(csv, `All_Weeks_Submissions.csv`);
 };
 const usersWhoSubmitted = submissions.map(s => s.user_id);
 const usersWhoDidntSubmit = users.filter(u => !u.is_admin && !usersWhoSubmitted.includes(u.id));
@@ -847,24 +898,21 @@ className="w-full px-4 py-2 border rounded-lg"
 ))}
 </select>
 </div>
-
-{/* ✅ EXPORT BUTTONS */}
 <div className="mb-6 flex gap-3">
-  <button
-    onClick={() => exportSelectedWeek(gamesLists, selectedGame, submissions, matches, users)}
-    disabled={!selectedGame}
-    className={`px-4 py-2 rounded-lg font-semibold ${!selectedGame ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
-  >
-    📥 Export Selected Week
-  </button>
-  <button
-    onClick={() => exportAllWeeks(gamesLists, users)}
-    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
-  >
-    📥 Export All Weeks
-  </button>
+<button
+onClick={() => exportSelectedWeek(gamesLists, selectedGame, submissions, matches, users)}
+disabled={!selectedGame}
+className={`px-4 py-2 rounded-lg font-semibold ${!selectedGame ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+>
+📥 Export Selected Week
+</button>
+<button
+onClick={() => exportAllWeeks(gamesLists, users)}
+className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
+>
+📥 Export All Weeks
+</button>
 </div>
-
 {selectedGame && (
 <>
 <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -926,7 +974,6 @@ Actual: {match.home_score || '?'} - {match.away_score || '?'}
 </div>
 );
 };
-// ✅ MANAGE USERS WITH DELETE BUTTON
 const ManageUsers = ({ users, loadData }) => {
 const [showForm, setShowForm] = React.useState(false);
 const [editingUser, setEditingUser] = React.useState(null);
@@ -982,7 +1029,6 @@ className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg mr-2"
 >
 Edit
 </button>
-{/* ✅ DELETE USER BUTTON */}
 <button
 onClick={() => deleteUser(user.id, user.username, loadData)}
 className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
@@ -1060,29 +1106,17 @@ const Leaderboard = ({ gamesLists, users }) => {
 const [selectedGame, setSelectedGame] = React.useState(null);
 const [leaderboardData, setLeaderboardData] = React.useState([]);
 const [overallLeaderboard, setOverallLeaderboard] = React.useState([]);
-React.useEffect(() => {
-calculateOverallLeaderboard();
-}, [gamesLists, users]);
-React.useEffect(() => {
-if (selectedGame) {
-calculateLeaderboard();
-}
-}, [selectedGame]);
+React.useEffect(() => { calculateOverallLeaderboard(); }, [gamesLists, users]);
+React.useEffect(() => { if (selectedGame) calculateLeaderboard(); }, [selectedGame]);
 const calculateLeaderboard = async () => {
-const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const submissions = await response1.json();
-const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const submissions = await res1.json();
+const res2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matches = await response2.json();
+const matches = await res2.json();
 const scores = submissions.map(sub => {
 const user = users.find(u => u.id === sub.user_id);
 const { total } = calculateUserPoints(sub.predictions, matches);
@@ -1094,20 +1128,14 @@ setLeaderboardData(scores);
 const calculateOverallLeaderboard = async () => {
 const userScores = {};
 for (const game of gamesLists) {
-const response1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res1 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const submissions = await response1.json();
-const response2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const submissions = await res1.json();
+const res2 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matches = await response2.json();
+const matches = await res2.json();
 submissions?.forEach(sub => {
 const user = users.find(u => u.id === sub.user_id);
 if (!user) return;
@@ -1172,16 +1200,8 @@ const [predictions, setPredictions] = React.useState([]);
 const [joker, setJoker] = React.useState(null);
 const [hasSubmitted, setHasSubmitted] = React.useState(false);
 const [users, setUsers] = React.useState([]);
-React.useEffect(() => {
-loadGamesLists();
-loadUsers();
-}, []);
-React.useEffect(() => {
-if (selectedGame) {
-loadMatches();
-checkSubmission();
-}
-}, [selectedGame]);
+React.useEffect(() => { loadGamesLists(); loadUsers(); }, []);
+React.useEffect(() => { if (selectedGame) { loadMatches(); checkSubmission(); } }, [selectedGame]);
 const loadGamesLists = async () => {
 const { data } = await supabase.from('games_lists').select('*').order('deadline', { ascending: false });
 setGamesLists(data || []);
@@ -1191,24 +1211,18 @@ const { data } = await supabase.from('users').select('*');
 setUsers(data || []);
 };
 const loadMatches = async () => {
-const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const data = await response.json();
+const data = await res.json();
 setMatches(data || []);
 setPredictions(data?.map(m => ({ match_id: m.id, home_score: '', away_score: '', is_joker: false })) || []);
 };
 const checkSubmission = async () => {
-const response = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&user_id=eq.${user.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&user_id=eq.${user.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const data = await response.json();
+const data = await res.json();
 if (data && data.length > 0) {
 setHasSubmitted(true);
 setPredictions(data[0].predictions);
@@ -1229,10 +1243,7 @@ return;
 const submissionData = {
 games_list_id: selectedGame.id,
 user_id: user.id,
-predictions: predictions.map(p => ({
-...p,
-is_joker: p.match_id === joker
-}))
+predictions: predictions.map(p => ({ ...p, is_joker: p.match_id === joker }))
 };
 await supabase.from('predictions').upsert([submissionData]);
 setHasSubmitted(true);
@@ -1378,26 +1389,16 @@ const ViewResults = ({ gamesLists, users, user }) => {
 const [selectedGame, setSelectedGame] = React.useState(null);
 const [matches, setMatches] = React.useState([]);
 const [allPredictions, setAllPredictions] = React.useState([]);
-React.useEffect(() => {
-if (selectedGame) {
-loadResults();
-}
-}, [selectedGame]);
+React.useEffect(() => { if (selectedGame) loadResults(); }, [selectedGame]);
 const loadResults = async () => {
-const response1 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const res1 = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${selectedGame.id}&select=*&order=match_number.asc`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const matchData = await response1.json();
-const response2 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
-headers: {
-'apikey': SUPABASE_ANON_KEY,
-'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-}
+const matchData = await res1.json();
+const res2 = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${selectedGame.id}&select=*`, {
+headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
-const preds = await response2.json();
+const preds = await res2.json();
 setMatches(matchData || []);
 setAllPredictions(preds || []);
 };
