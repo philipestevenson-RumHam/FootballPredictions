@@ -12,11 +12,10 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-// CONFIG — No import needed (React is global)
+// CONFIG
 const SUPABASE_URL = 'https://oggoghhbjskbwcrsxigl.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nZ29naGhianNrYndjcnN4aWdsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNzkyNjIsImV4cCI6MjA4Mjk1NTI2Mn0.kaJLNonTZ7diSieUBjct9TeA6mMT9qSjH1Nyl1_Svb0';
 
-// ✅ FIXED: Chainable .eq() with proper encoding
 const supabase = {
 from: (table) => ({
 select: (columns = '*') => {
@@ -135,20 +134,33 @@ body: JSON.stringify(records)
 });
 resolve({ error: null });
 }
+}),
+delete: () => ({
+eq: (column, value) => ({
+then: async (resolve) => {
+const url = `${SUPABASE_URL}/rest/v1/${table}?${column}=eq.${encodeURIComponent(value)}`;
+const response = await fetch(url, {
+method: 'DELETE',
+headers: {
+'apikey': SUPABASE_ANON_KEY,
+'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+}
+});
+resolve({ error: null });
+}
+})
 })
 })
 };
 
-// ✅ NEW: Enhanced point calculation with joker reassignment
+// ✅ FIXED SCORING LOGIC — Handles strings & "C"
 const calculateUserPoints = (predictions, matches) => {
-  // Find original joker
   const originalJoker = predictions.find(p => p.is_joker);
   let effectiveJokerMatchId = null;
 
   if (originalJoker) {
     const jokerMatch = matches.find(m => m.id === originalJoker.match_id);
     if (jokerMatch && jokerMatch.home_score === 'C' && jokerMatch.away_score === 'C') {
-      // Joker is on cancelled match — find first non-cancelled
       const firstValid = matches.find(m => !(m.home_score === 'C' && m.away_score === 'C'));
       effectiveJokerMatchId = firstValid ? firstValid.id : null;
     } else {
@@ -161,30 +173,38 @@ const calculateUserPoints = (predictions, matches) => {
     const match = matches.find(m => m.id === pred.match_id);
     if (!match) return { points: 0 };
 
-    // Skip cancelled matches
-    if (match.home_score === 'C' && match.away_score === 'C') {
+    if (match.home_score === 'C' || match.away_score === 'C') {
+      return { points: 0 };
+    }
+
+    const actualHome = parseInt(match.home_score);
+    const actualAway = parseInt(match.away_score);
+    if (isNaN(actualHome) || isNaN(actualAway)) {
+      return { points: 0 };
+    }
+
+    let predHome = pred.home_score;
+    let predAway = pred.away_score;
+    if (predHome === 'C' || predAway === 'C') {
+      return { points: 0 };
+    }
+
+    predHome = parseInt(predHome);
+    predAway = parseInt(predAway);
+    if (isNaN(predHome) || isNaN(predAway)) {
       return { points: 0 };
     }
 
     let points = 0;
-    const predHome = pred.home_score;
-    const predAway = pred.away_score;
-    const actualHome = match.home_score;
-    const actualAway = match.away_score;
-
-    // Skip if actual scores aren't numeric (shouldn't happen post-save)
-    if (typeof actualHome !== 'number' || typeof actualAway !== 'number') {
-      return { points: 0 };
-    }
-
     if (predHome === actualHome) points += 1;
     if (predAway === actualAway) points += 1;
+
     const predResult = predHome > predAway ? 'H' : predHome < predAway ? 'A' : 'D';
     const actualResult = actualHome > actualAway ? 'H' : actualHome < actualAway ? 'A' : 'D';
     if (predResult === actualResult) points += 1;
+
     if (predHome === actualHome && predAway === actualAway) points += 1;
 
-    // Apply joker bonus to effective match
     if (match.id === effectiveJokerMatchId) {
       points *= 2;
     }
@@ -197,6 +217,92 @@ const calculateUserPoints = (predictions, matches) => {
     detailed
   };
 };
+
+// ✅ DELETE UTILS
+const deleteWeek = async (gameId, weekNumber, loadData) => {
+  if (!confirm(`Delete Week ${weekNumber}? This removes all matches and predictions.`)) return;
+  await supabase.from('games_lists').delete().eq('id', gameId);
+  alert(`Week ${weekNumber} deleted.`);
+  loadData();
+};
+
+const deleteUser = async (userId, username, loadData) => {
+  if (!confirm(`Delete user "${username}"? This removes all their predictions.`)) return;
+  await supabase.from('users').delete().eq('id', userId);
+  alert(`User "${username}" deleted.`);
+  loadData();
+};
+
+// ✅ CSV EXPORTS
+const exportSelectedWeek = (gamesLists, selectedGame, submissions, matches, users) => {
+  if (!selectedGame) return;
+  const weekNumber = selectedGame.week_number;
+  let csvContent = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
+
+  submissions.forEach(sub => {
+    const user = users.find(u => u.id === sub.user_id);
+    if (!user) return;
+    const { total, detailed } = calculateUserPoints(sub.predictions, matches);
+    matches.forEach((match, idx) => {
+      const pred = sub.predictions.find(p => p.match_id === match.id);
+      const actualHome = match.home_score ?? '';
+      const actualAway = match.away_score ?? '';
+      const predHome = pred?.home_score ?? '';
+      const predAway = pred?.away_score ?? '';
+      const isJoker = pred?.is_joker ? 'Yes' : 'No';
+      const points = detailed[idx]?.points || 0;
+      const totalForRow = idx === 0 ? total : '';
+      csvContent += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
+    });
+  });
+  downloadCSV(csvContent, `Week_${weekNumber}_Submissions.csv`);
+};
+
+const exportAllWeeks = async (gamesLists, users) => {
+  let csvContent = 'Week,Username,Match Number,Home Team,Away Team,Actual Home,Actual Away,Predicted Home,Predicted Away,Joker,Match Points,Total Points\n';
+
+  for (const game of gamesLists) {
+    const weekNumber = game.week_number;
+    const resMatches = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    const matches = await resMatches.json();
+    const resSubs = await fetch(`${SUPABASE_URL}/rest/v1/predictions?games_list_id=eq.${game.id}&select=*`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    const submissions = await resSubs.json();
+
+    submissions.forEach(sub => {
+      const user = users.find(u => u.id === sub.user_id);
+      if (!user) return;
+      const { total, detailed } = calculateUserPoints(sub.predictions, matches);
+      matches.forEach((match, idx) => {
+        const pred = sub.predictions.find(p => p.match_id === match.id);
+        const actualHome = match.home_score ?? '';
+        const actualAway = match.away_score ?? '';
+        const predHome = pred?.home_score ?? '';
+        const predAway = pred?.away_score ?? '';
+        const isJoker = pred?.is_joker ? 'Yes' : 'No';
+        const points = detailed[idx]?.points || 0;
+        const totalForRow = idx === 0 ? total : '';
+        csvContent += `"${weekNumber}","${user.username}","${match.match_number}","${match.home_team}","${match.away_team}","${actualHome}","${actualAway}","${predHome}","${predAway}","${isJoker}","${points}","${totalForRow}"\n`;
+      });
+    });
+  }
+  downloadCSV(csvContent, `All_Weeks_Submissions.csv`);
+};
+
+const downloadCSV = (csv, filename) => {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// --- Rest of App Components (unchanged except ManageUsers) ---
 
 const App = () => {
 const [user, setUser] = React.useState(null);
@@ -433,46 +539,41 @@ week_number: '',
 deadline: '',
 matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
 });
-
 const parseCSV = (text) => {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim());
-  const matches = [];
-  for (let i = 1; i < lines.length && i <= 10; i++) {
-    const values = lines[i].split(',').map(v => v.trim());
-    const obj = {};
-    headers.forEach((h, idx) => {
-      obj[h] = values[idx] || '';
-    });
-    matches.push({
-      home_team: obj['Home Team'] || obj['home_team'] || '',
-      away_team: obj['Away Team'] || obj['away_team'] || '',
-      home_score: obj['Home Score'] ? (obj['Home Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Home Score'])) : null,
-      away_score: obj['Away Score'] ? (obj['Away Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Away Score'])) : null
-    });
-  }
-  // Pad to 10
-  while (matches.length < 10) {
-    matches.push({ home_team: '', away_team: '', home_score: null, away_score: null });
-  }
-  return matches;
+const lines = text.trim().split('\n');
+const headers = lines[0].split(',').map(h => h.trim());
+const matches = [];
+for (let i = 1; i < lines.length && i <= 10; i++) {
+const values = lines[i].split(',').map(v => v.trim());
+const obj = {};
+headers.forEach((h, idx) => {
+obj[h] = values[idx] || '';
+});
+matches.push({
+home_team: obj['Home Team'] || obj['home_team'] || '',
+away_team: obj['Away Team'] || obj['away_team'] || '',
+home_score: obj['Home Score'] ? (obj['Home Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Home Score'])) : null,
+away_score: obj['Away Score'] ? (obj['Away Score'].toUpperCase() === 'C' ? 'C' : parseInt(obj['Away Score'])) : null
+});
+}
+while (matches.length < 10) {
+matches.push({ home_team: '', away_team: '', home_score: null, away_score: null });
+}
+return matches;
 };
-
 const handleFileUpload = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const csv = event.target.result;
-    const matches = parseCSV(csv);
-    setFormData(prev => ({ ...prev, matches }));
-  };
-  reader.readAsText(file);
+const file = e.target.files[0];
+if (!file) return;
+const reader = new FileReader();
+reader.onload = (event) => {
+const csv = event.target.result;
+const matches = parseCSV(csv);
+setFormData(prev => ({ ...prev, matches }));
 };
-
+reader.readAsText(file);
+};
 const handleSubmit = async (e) => {
 e.preventDefault();
-// Update games_lists (metadata)
 await supabase
 .from('games_lists')
 .update({
@@ -480,7 +581,6 @@ week_number: formData.week_number,
 deadline: formData.deadline
 })
 .eq('id', editingGame.id);
-// ✅ Update each match's data in the `matches` table
 for (let i = 0; i < formData.matches.length; i++) {
 const matchData = formData.matches[i];
 const orig = originalMatches.find(m => m.match_number === i + 1);
@@ -504,7 +604,7 @@ week_number: '',
 deadline: '',
 matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
 });
-loadData(); // Refresh
+loadData();
 };
 const handleEdit = async (game) => {
 const response = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${game.id}&select=*&order=match_number.asc`, {
@@ -570,6 +670,13 @@ onClick={() => handleExportCSV(game.id)}
 className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
 >
 Export CSV
+</button>
+{/* ✅ DELETE WEEK BUTTON */}
+<button
+onClick={() => deleteWeek(game.id, game.week_number, loadData)}
+className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+>
+Delete Week
 </button>
 </div>
 </div>
@@ -740,6 +847,24 @@ className="w-full px-4 py-2 border rounded-lg"
 ))}
 </select>
 </div>
+
+{/* ✅ EXPORT BUTTONS */}
+<div className="mb-6 flex gap-3">
+  <button
+    onClick={() => exportSelectedWeek(gamesLists, selectedGame, submissions, matches, users)}
+    disabled={!selectedGame}
+    className={`px-4 py-2 rounded-lg font-semibold ${!selectedGame ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+  >
+    📥 Export Selected Week
+  </button>
+  <button
+    onClick={() => exportAllWeeks(gamesLists, users)}
+    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
+  >
+    📥 Export All Weeks
+  </button>
+</div>
+
 {selectedGame && (
 <>
 <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -756,7 +881,6 @@ className="w-full px-4 py-2 border rounded-lg"
 {submissions.map(sub => {
 const user = users.find(u => u.id === sub.user_id);
 const { total, detailed } = calculateUserPoints(sub.predictions, matches);
-
 return (
 <div key={sub.id} className="border rounded-lg p-4">
 <div className="flex justify-between items-center mb-3">
@@ -771,7 +895,7 @@ return (
 <div key={match.id} className="flex justify-between items-center p-2 bg-gray-50 rounded">
 <div>
 <span className="font-semibold">
-{match.home_team} vs {match.away_team}
+Match {match.match_number}: {match.home_team} vs {match.away_team}
 {pred?.is_joker && <span className="ml-2 text-yellow-600">🃏</span>}
 </span>
 <br />
@@ -802,6 +926,7 @@ Actual: {match.home_score || '?'} - {match.away_score || '?'}
 </div>
 );
 };
+// ✅ MANAGE USERS WITH DELETE BUTTON
 const ManageUsers = ({ users, loadData }) => {
 const [showForm, setShowForm] = React.useState(false);
 const [editingUser, setEditingUser] = React.useState(null);
@@ -853,9 +978,16 @@ setEditingUser(user);
 setFormData(user);
 setShowForm(true);
 }}
-className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg mr-2"
 >
 Edit
+</button>
+{/* ✅ DELETE USER BUTTON */}
+<button
+onClick={() => deleteUser(user.id, user.username, loadData)}
+className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+>
+Delete
 </button>
 </td>
 </tr>
@@ -1308,7 +1440,7 @@ return (
 <div key={match.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
 <div>
 <span className="font-semibold">
-{match.home_team} vs {match.away_team}
+Match {match.match_number}: {match.home_team} vs {match.away_team}
 {userPred?.is_joker && <span className="ml-2 text-yellow-600">🃏</span>}
 </span>
 <br />
@@ -1339,7 +1471,6 @@ Actual: {match.home_score || '?'} - {match.away_score || '?'}
 </div>
 );
 };
-// ✅ React 18 ROOT
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 </script>
