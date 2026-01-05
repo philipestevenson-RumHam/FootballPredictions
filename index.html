@@ -460,11 +460,26 @@ week_number: '',
 deadline: '',
 matches: Array(10).fill().map(() => ({ home_team: '', away_team: '', home_score: null, away_score: null }))
 });
+
+
 const parseCSV = (text) => {
 const lines = text.trim().split('\n');
 const headers = lines[0].split(',').map(h => h.trim());
+
+// Check if first line contains week info
+const firstLine = lines[1].split(',').map(v => v.trim());
+let startIdx = 1;
+let weekNum = '';
+let deadline = '';
+
+if (headers[0] === 'Week Number' || firstLine[0].match(/^\d+$/)) {
+weekNum = firstLine[0];
+deadline = firstLine[1];
+startIdx = 2;
+}
+
 const matches = [];
-for (let i = 1; i < lines.length && i <= 10; i++) {
+for (let i = startIdx; i < lines.length && matches.length < 10; i++) {
 const values = lines[i].split(',').map(v => v.trim());
 const obj = {};
 headers.forEach((h, idx) => {
@@ -480,19 +495,29 @@ away_score: obj['Away Score'] ? (obj['Away Score'].toUpperCase() === 'C' ? 'C' :
 while (matches.length < 10) {
 matches.push({ home_team: '', away_team: '', home_score: null, away_score: null });
 }
-return matches;
+return { matches, weekNum, deadline };
 };
+
+
+
 const handleFileUpload = (e) => {
 const file = e.target.files[0];
 if (!file) return;
 const reader = new FileReader();
 reader.onload = (event) => {
 const csv = event.target.result;
-const matches = parseCSV(csv);
-setFormData(prev => ({ ...prev, matches }));
+const { matches, weekNum, deadline } = parseCSV(csv);
+setFormData(prev => ({ 
+...prev, 
+matches,
+week_number: weekNum || prev.week_number,
+deadline: deadline || prev.deadline
+}));
 };
 reader.readAsText(file);
 };
+
+
 const removeMatch = (index) => {
 const newMatches = [...formData.matches];
 newMatches.splice(index, 1);
@@ -617,15 +642,20 @@ matches: padded
 });
 setShowForm(true);
 };
+
 const handleExportCSV = async (gameId) => {
+const game = gamesLists.find(g => g.id === gameId);
 const res = await fetch(`${SUPABASE_URL}/rest/v1/matches?games_list_id=eq.${gameId}&select=*&order=match_number.asc`, {
 headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
 });
 const matches = await res.json();
-const csv = 'Home Team,Away Team,Home Score,Away Score\n' +
-matches.map(m => `${m.home_team},${m.away_team},${m.home_score || ''},${m.away_score || ''}`).join('\n');
-downloadCSV(csv, `week_${formData.week_number}_matches.csv`);
+const csv = 'Week Number,Deadline,Home Team,Away Team,Home Score,Away Score\n' +
+`${game.week_number},${game.deadline},,,,\n` +
+matches.map(m => `,,${m.home_team},${m.away_team},${m.home_score || ''},${m.away_score || ''}`).join('\n');
+downloadCSV(csv, `week_${game.week_number}_matches.csv`);
 };
+
+
 return (
 <div>
 {!showForm ? (
