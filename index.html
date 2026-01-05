@@ -779,9 +779,7 @@ className="px-3 py-2 border rounded"
 />
 
 <input
-  type="number"
-  inputMode="numeric"
-  pattern="[0-9]*"
+  type="tel"
   placeholder="Home"
   value={predictions[idx]?.home_score || ''}
   onChange={(e) => {
@@ -795,9 +793,7 @@ className="px-3 py-2 border rounded"
 
 
 <input
-  type="number"
-  inputMode="numeric"
-  pattern="[0-9]*"
+  type="tel"
   placeholder="Away"
   value={predictions[idx]?.away_score || ''}
   onChange={(e) => {
