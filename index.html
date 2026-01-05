@@ -777,30 +777,38 @@ setFormData({ ...formData, matches: newMatches });
 }}
 className="px-3 py-2 border rounded"
 />
+
 <input
-type="text"
-placeholder="Home"
-value={match.home_score || ''}
-onChange={(e) => {
-const newMatches = [...formData.matches];
-const val = e.target.value.toUpperCase();
-newMatches[idx].home_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
-setFormData({ ...formData, matches: newMatches });
-}}
-className="px-3 py-2 border rounded w-16"
+  type="number"
+  inputMode="numeric"
+  pattern="[0-9]*"
+  placeholder="Home"
+  value={predictions[idx]?.home_score || ''}
+  onChange={(e) => {
+    const newPreds = [...predictions];
+    newPreds[idx].home_score = e.target.value;
+    setPredictions(newPreds);
+  }}
+  className="w-24 px-3 py-2 border rounded-lg text-center"
+  disabled={isPastDeadline}
 />
+
+
 <input
-type="text"
-placeholder="Away"
-value={match.away_score || ''}
-onChange={(e) => {
-const newMatches = [...formData.matches];
-const val = e.target.value.toUpperCase();
-newMatches[idx].away_score = val === 'C' ? 'C' : (val === '' ? null : parseInt(val));
-setFormData({ ...formData, matches: newMatches });
-}}
-className="px-3 py-2 border rounded w-16"
+  type="number"
+  inputMode="numeric"
+  pattern="[0-9]*"
+  placeholder="Away"
+  value={predictions[idx]?.away_score || ''}
+  onChange={(e) => {
+    const newPreds = [...predictions];
+    newPreds[idx].away_score = e.target.value;
+    setPredictions(newPreds);
+  }}
+  className="w-24 px-3 py-2 border rounded-lg text-center"
+  disabled={isPastDeadline}
 />
+
 <button
 type="button"
 onClick={() => removeMatch(idx)}
